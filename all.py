@@ -1,6 +1,6 @@
 import json
-from test2 import main as load_data
-from ss import process_one
+from linkG import main as load_data
+from OCR import process_one
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
