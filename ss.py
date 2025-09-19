@@ -27,21 +27,28 @@ image_url = [
              
 
 def process_one(url: str) -> dict:
-    resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages= [
-            {
-                "role": "user",
-                "content":  [
-                    {"type": "text", "text": "Extraia o texto desta imagem e retorne em JSON. quero que sempre retorne apenas o patrimonio."},
-                    {"type": "text", "text": "Tennha como objetivo claro e principal a leitura desses códigos que irei te passar. Todas as máquinas terão código que começam com um desses códigos. Leia estritamente na imagem esses códigos, tudo que não começãr com um dos códigos passados pelo json, ignore, vasculhe a imagem inteira em busca dos códigos certos "},
-                    {"type": "text", "text": json.dumps(dados, ensure_ascii=False)},
-                    {"type":"image_url","image_url": {"url": url}}
-                ]
-            }
-        ],
-    )
-    return {"url": url, "saida": resp.choices[0].message.content}
+    try:
+        resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages= [
+                {
+                    "role": "user",
+                    "content":  [
+                        {"type": "text", "text": "Extraia o texto desta imagem e retorne em JSON. quero que sempre retorne apenas o patrimonio."},
+                        {"type": "text", "text": "Tennha como objetivo claro e principal a leitura desses códigos que irei te passar. Todas as máquinas terão código que começam com um desses códigos. Leia estritamente na imagem esses códigos, tudo que não começãr com um dos códigos passados pelo json, ignore, vasculhe a imagem inteira em busca dos códigos certos "},
+                        {"type": "text", "text": json.dumps(dados, ensure_ascii=False)},
+                        {"type":"image_url","image_url": {"url": url}}
+                    ]
+                }
+            ],
+        )
+        return {"url": url, "saida": resp.choices[0].message.content}
+    
+    except Exception as e:
+        # Loga o erro e retorna no JSON
+        err_msg = str(e)
+        print(f"❌ Erro ao processar {url}: {err_msg}")
+        return {"url": url, "erro": err_msg}
 
 def main():
     resultados = []

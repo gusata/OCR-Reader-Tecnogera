@@ -17,10 +17,10 @@ APP_KEY = os.getenv("APP_KEY")  # defina no ambiente
 APP_SECRET = os.getenv("APP_SECRET")  # defina no ambiente
 ROOT_PATH = "/Sisloc"         # pasta alvo
 RECURSIVE = True        # varrer subpastas?
-MAX_RESULTS = 14       # quantidade máxima de imagens a retornar
+MAX_RESULTS = 500       # quantidade máxima de imagens a retornar
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".webp", "/"}
 HASH_FRAGMENT = None 
-NAME_FILTER = "c57"          # str | list[str] | None  (ex.: "fatura" ou ["img_", "2025"])          # str | list[str] | None  (ex.: "fatura" ou ["img_", "2025"])
+NAME_FILTER = "c0"          # str | list[str] | None  (ex.: "fatura" ou ["img_", "2025"])          # str | list[str] | None  (ex.: "fatura" ou ["img_", "2025"])
 NAME_MODE = "contains"      # 'contains' | 'startswith' | 'endswith' | 'regex'
 CASE_SENSITIVE = False   # ex.: "abc123" para filtrar por parte do hash (opcional)
 
@@ -121,7 +121,7 @@ def coletar_ontem_ordenado(dbx: dropbox.Dropbox, root_path: str, max_results: in
             if not isinstance(e, FileMetadata):
                 continue
             # filtro por extensão/nome já aqui para reduzir memória
-            if NAME_FILTER and "_c57_" not in e.name.lower():
+            if NAME_FILTER and "_c0_" not in e.name.lower():
                 continue
             if not is_image(e.name):
                 continue
@@ -255,7 +255,7 @@ def main():
         if fdate < ONTEM:
             return  # mais antigo do que ontem
         # é ontem
-        if NAME_FILTER and "_c57_" not in e.name.lower():
+        if NAME_FILTER and "_c0_" not in e.name.lower():
             return
         if not is_image(e.name):
             return
