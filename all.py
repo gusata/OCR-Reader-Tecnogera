@@ -1,10 +1,11 @@
 import json
-from linkG import main as load_data
+from LinkG import main as load_data
 from OCR import process_one
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
 import pytz
+import time
 
 """ Garante import do fuso hrário correto """
 TZ = pytz.timezone("America/Sao_Paulo")
@@ -15,11 +16,21 @@ def run():
         raise TypeError(f"Esperava lista de itens, recebi: {type(dados)}")
 
     resultados = []
-    for item in dados:
-        link = item.get("temporary_link")
-        if not link:
-            continue
-        resultados.append(process_one(link))
+    # percorre em blocos de 10
+    for i in range(0, len(dados), 5):
+        bloco = dados[i:i+5]
+        for item in bloco:
+            link = item.get("temporary_link")
+            if not link:
+                continue
+            resultados.append(process_one(link))
+
+        print(f"[ok] Bloco {i//5 + 1} processado ({len(resultados)} itens até agora)")
+
+        # Delay de 2 minutos, exceto depois do último bloco
+        if i + 5 < len(dados):
+            print("Aguardando 2 minutos antes de processar o próximo bloco...")
+            time.sleep(120)
 
     return {"resultados": resultados}
 
