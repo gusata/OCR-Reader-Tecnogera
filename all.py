@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 import sys
 
+
 """ Garante import do fuso hrário correto """
 TZ = pytz.timezone("America/Sao_Paulo")
 
