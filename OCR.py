@@ -15,6 +15,8 @@ API_OPENAI = os.getenv("API_OPENAI")  # defina no ambiente
 
 MAX_RETRIES = 3
 
+PATRIMONIO_RE = re.compile(r'"?patrimonio"?\s*[:=]\s*"?(?P<pat>[\w\-/.]+)"?', re.IGNORECASE)
+
 client = OpenAI(api_key=API_OPENAI)
 
 image_url = [
@@ -27,28 +29,43 @@ image_url = [
              
 
 def process_one(url: str) -> dict:
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extraia o texto desta imagem e retorne em JSON. quero que sempre retorne apenas o patrimonio."},
+                    {"type": "text", "text": "Tennha como objetivo claro e principal a leitura desses códigos que irei te passar. Todas as máquinas terão código que começam com um desses códigos. Leia estritamente na imagem esses códigos, tudo que não começãr com um dos códigos passados pelo json, ignore, vasculhe a imagem inteira em busca dos códigos certos "},
+                    {"type": "text", "text": json.dumps(dados, ensure_ascii=False)},
+                    {"type": "image_url", "image_url": {"url": url}},
+                ],
+            }
+        ],
+        temperature=0
+    )
+
+    raw = resp.choices[0].message.content or ""
+
+    patrimonio = None
+    # 1) tentar carregar como JSON:
     try:
-        resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages= [
-                {
-                    "role": "user",
-                    "content":  [
-                        {"type": "text", "text": "Extraia o texto desta imagem e retorne em JSON. quero que sempre retorne apenas o patrimonio."},
-                        {"type": "text", "text": "Tennha como objetivo claro e principal a leitura desses códigos que irei te passar. Todas as máquinas terão código que começam com um desses códigos. Leia estritamente na imagem esses códigos, tudo que não começãr com um dos códigos passados pelo json, ignore, vasculhe a imagem inteira em busca dos códigos certos "},
-                        {"type": "text", "text": json.dumps(dados, ensure_ascii=False)},
-                        {"type":"image_url","image_url": {"url": url}}
-                    ]
-                }
-            ],
-        )
-        return {"url": url, "saida": resp.choices[0].message.content}
-    
-    except Exception as e:
-        # Loga o erro e retorna no JSON
-        err_msg = str(e)
-        print(f"❌ Erro ao processar {url}: {err_msg}")
-        return {"url": url, "erro": err_msg}
+        obj = json.loads(raw)
+        # aceita {"patrimonio": "..."} ou lista/obj com chave similar
+        if isinstance(obj, dict) and "patrimonio" in obj:
+            patrimonio = obj.get("patrimonio")
+        elif isinstance(obj, list) and obj and isinstance(obj[0], dict) and "patrimonio" in obj[0]:
+            patrimonio = obj[0].get("patrimonio")
+    except Exception:
+        pass
+
+    # 2) fallback por regex no texto, se não veio JSON limpo:
+    if not patrimonio:
+        m = PATRIMONIO_RE.search(raw)
+        if m:
+            patrimonio = m.group("pat")
+
+    return {"patrimonio": patrimonio, "raw": raw}
 
 def main():
     resultados = []

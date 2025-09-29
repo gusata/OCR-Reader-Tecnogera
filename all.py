@@ -1,5 +1,6 @@
 import json
-from LinkG import main as load_data
+import re
+from linkG import main as load_data
 from OCR import process_one
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -14,47 +15,148 @@ import sys
 """ Garante import do fuso hrário correto """
 TZ = pytz.timezone("America/Sao_Paulo")
 
+DATE_FROM_NAME = re.compile(
+    r"_(\d{2})_(\d{2})_(\d{4})-(\d{2})_(\d{2})_(\d{2})"  # _DD_MM_YYYY-HH_MM_SS
+)
+
+CONTA = "Tecnogera Geradores"  # ajuda no agrupamento por conta
+
+def _infer_data(dropbox_item: dict, arquivo: str, pasta_data: datetime) -> str:
+    """
+    Retorna string no formato YYYY-MM-DD para o campo `data`.
+    Prioridade: client_modified -> nome arquivo -> pasta (ontem) -> hoje.
+    """
+    # 1) client_modified (ISO) -> YYYY-MM-DD
+    cm = dropbox_item.get("client_modified")
+    if cm:
+        try:
+            dt = datetime.fromisoformat(cm.replace("Z","+00:00")).astimezone(TZ)
+            return dt.date().isoformat()
+        except Exception:
+            pass
+
+    # 2) nome do arquivo
+    m = DATE_FROM_NAME.search(arquivo or "")
+    if m:
+        dd, mm, yyyy, hh, mi, ss = m.groups()
+        try:
+            dt = datetime(int(yyyy), int(mm), int(dd), int(hh), int(mi), int(ss), tzinfo=TZ)
+            return dt.date().isoformat()
+        except Exception:
+            pass
+
+    # 3) data da pasta (ex.: 2025-09-28)
+    if isinstance(pasta_data, datetime):
+        return pasta_data.date().isoformat()
+
+    # 4) fallback hoje
+    return datetime.now(TZ).date().isoformat()
+
+
+def _normalize_for_db(dropbox_item: dict, ocr_item: dict, pasta_data_dt: datetime) -> dict:
+
+    agora_iso = datetime.now(TZ).isoformat()
+    arquivo = dropbox_item.get("nome_link")
+
+    return {
+
+        "conta": "Tecnogera Geradores",
+        "arquivo": arquivo,
+        "dropbox_link": dropbox_item.get("temporary_link"),
+        "filial": dropbox_item.get("path_lower"),
+        "content_hash": dropbox_item.get("content_hash"),
+        "client_modified": dropbox_item.get("client_modified"),
+        "checklist": dropbox_item.get("codigo"),
+        "cod_patrimonio": ocr_item.get("patrimonio"),
+        "ocr_raw": ocr_item.get("raw"),
+        "processado_em": agora_iso,
+        # NOVO:
+        "data": _infer_data(dropbox_item, arquivo, pasta_data_dt),
+
+    }
+
 def run():
-    dados = load_data()
-    if not isinstance(dados, list):
-        raise TypeError(f"Esperava lista de itens, recebi: {type(dados)}")
+    itens = load_data()
+    if not isinstance(itens, list):
+        raise TypeError(f"Esperava lista de itens, recebi: {type(itens)}")
 
-    resultados = []
-    # percorre em blocos de 10
-    for i in range(0, len(dados), 5):
-        bloco = dados[i:i+5]
+    from datetime import datetime, timedelta
+    import pytz
+    TZ = pytz.timezone("America/Sao_Paulo")
+    pasta_data_dt = datetime.now(TZ) - timedelta(days=1)
+
+    registros_bd = []
+
+    # processa em blocos de 10 (ajuste se quiser)
+    for i in range(0, len(itens), 10):
+        bloco = itens[i:i+10]
+
         for item in bloco:
-            link = item.get("temporary_link")
+            registro = None  # garante variável definida
+            link = (item or {}).get("temporary_link")
             if not link:
+                print("[warn] Item sem temporary_link, ignorando.")
                 continue
-            resultados.append(process_one(link))
 
-        print(f"[ok] Bloco {i//5 + 1} processado ({len(resultados)} itens até agora)")
+            try:
+                ocr = process_one(link)
+                registro = _normalize_for_db(item, ocr, pasta_data_dt)
+            except Exception as e:
+                # não deixa explodir o loop — loga e segue
+                nome = (item or {}).get("nome_link", "<sem nome>")
+                print(f"[warn] Falha ao processar '{nome}': {e}")
+                continue
 
-        # Delay de 2 minutos, exceto depois do último bloco
-        if i + 5 < len(dados):
-            print("Aguardando 2 minutos antes de processar o próximo bloco...")
-            time.sleep(120)
+            if registro:
+                registros_bd.append(registro)
 
-    return {"resultados": resultados}
+        print(f"[ok] Bloco {i//10 + 1} processado ({len(registros_bd)} itens até agora)")
+
+        # se usa janela/limite de taxa, mantenha:
+        if i + 10 < len(itens):
+            # time.sleep(120)  # descomente se precisar do intervalo
+            pass
+
+    return {"records": registros_bd, "count": len(registros_bd)}
 
 
-def salvar_json(saida: dict, base_dir: str = "out") -> str:
+def salvar_json(saida: dict, base_dir: str = "out") -> tuple[str, str]:
     """
-    Cria uma pasta com a data de ontem (YYYY-MM-DD) dentro de base_dir
-    e salva o JSON como 'resultado.json'. Retorna o caminho completo do arquivo.
+    Salva:
+      - out/YYYY-MM-DD/resultado_db.json  -> objeto { records: [...], count: N }
+      - out/YYYY-MM-DD/resultado.json     -> APENAS a lista de registros [...], compatível com o import
     """
+    from datetime import datetime, timedelta
+    import os, json, pytz
+    TZ = pytz.timezone("America/Sao_Paulo")
+
     agora = datetime.now(TZ)
     ontem = (agora - timedelta(days=1)).date()
     pasta = os.path.join(base_dir, ontem.strftime("%Y-%m-%d"))
     os.makedirs(pasta, exist_ok=True)
 
-    # nome fixo; se preferir histórico, troque por um com timestamp
-    arquivo = os.path.join(pasta, "resultado.json")
-    with open(arquivo, "w", encoding="utf-8") as f:
-        json.dump(saida, f, ensure_ascii=False, indent=2)
-    return arquivo
+    # garante a estrutura
+    records = []
+    if isinstance(saida, dict):
+        records = saida.get("records", [])
+    elif isinstance(saida, list):
+        records = saida
+        saida = {"records": records, "count": len(records)}
+    else:
+        raise TypeError(f"Formato inesperado de saída: {type(saida)}")
 
+    # 1) objeto completo
+    arquivo_db = os.path.join(pasta, "resultado_db.json")
+    with open(arquivo_db, "w", encoding="utf-8") as f:
+        json.dump(saida, f, ensure_ascii=False, indent=2)
+
+    # 2) APENAS a lista (compatível com importar_patrimonios)
+    arquivo_legacy = os.path.join(pasta, "resultado.json")
+    with open(arquivo_legacy, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+
+    print(f"[debug] Itens gravados no resultado.json: {len(records)}")
+    return arquivo_db, arquivo_legacy
 
 def enviar_para_banco(caminho_json: str,
                       python_exec: str = None,
@@ -89,18 +191,18 @@ def enviar_para_banco(caminho_json: str,
 
 
 
-def main():
-    saida = run()
-    caminho = salvar_json(saida)
 
-    # opcional: imprime só um resumo/confirmacao no terminal
-    print(f"JSON salvo em: {caminho}")
+def main():
+    saida = run()  # deve ser {"records": [...], "count": N}
+    arq_db, arq_legacy = salvar_json(saida)
+    print(f"JSON salvo em: {arq_legacy}")
+
     enviar_para_banco(
-        caminho_json=caminho,
-        # Exemplo se o Django estiver em outro ambiente:
-        # python_exec=r"C:\Users\gustavo.galeazzi\OCR-Database\.venv\Scripts\python.exe",
-        # manage_py=r"C:\Users\gustavo.galeazzi\OCR-Database\manage.py",
-    )
+        caminho_json=arq_db,  # use o arquivo compatível
+        python_exec=r"C:\Users\gustavo.galeazzi\OCR-Database\.venv\Scripts\python.exe",
+        manage_py=r"C:\Users\gustavo.galeazzi\OCR-Database\manage.py",
+)
+
 
 if __name__ == "__main__":
     main()
